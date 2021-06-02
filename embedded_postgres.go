@@ -58,10 +58,12 @@ func (ep *EmbeddedPostgres) Start() error {
 		return errors.New("server is already started")
 	}
 
+	log.Print("ensuring port")
 	if err := ensurePortAvailable(ep.config.port); err != nil {
 		return err
 	}
 
+	log.Print("locating cache")
 	cacheLocation, exists := ep.cacheLocator()
 	if !exists {
 		if err := ep.remoteFetchStrategy(); err != nil {
@@ -69,29 +71,36 @@ func (ep *EmbeddedPostgres) Start() error {
 		}
 	}
 
+	log.Print("get binary location")
 	binaryExtractLocation := userRuntimePathOrDefault(ep.config.runtimePath, cacheLocation)
+	log.Print("removing old")
 	if err := os.RemoveAll(binaryExtractLocation); err != nil {
 		return fmt.Errorf("unable to clean up runtime directory %s with error: %s", binaryExtractLocation, err)
 	}
 
+	log.Print("unarchiving")
 	if err := archiver.NewTarXz().Unarchive(cacheLocation, binaryExtractLocation); err != nil {
 		return fmt.Errorf("unable to extract postgres archive %s to %s", cacheLocation, binaryExtractLocation)
 	}
 
+	log.Print("getting data location")
 	dataLocation := userDataPathOrDefault(ep.config.dataPath, binaryExtractLocation)
 
 	reuseData := ep.config.dataPath != "" && dataDirIsValid(dataLocation, ep.config.version)
 
 	if !reuseData {
+		log.Print("removing data")
 		if err := os.RemoveAll(dataLocation); err != nil {
 			return fmt.Errorf("unable to clean up data directory %s with error: %s", dataLocation, err)
 		}
 
+		log.Print("init database")
 		if err := ep.initDatabase(binaryExtractLocation, dataLocation, ep.config.username, ep.config.password, ep.config.locale, ep.config.logger); err != nil {
 			return err
 		}
 	}
 
+	log.Print("starting postgres")
 	if err := startPostgres(binaryExtractLocation, ep.config); err != nil {
 		return err
 	}
@@ -99,7 +108,9 @@ func (ep *EmbeddedPostgres) Start() error {
 	ep.started = true
 
 	if !reuseData {
+		log.Print("creating database")
 		if err := ep.createDatabase(ep.config.port, ep.config.username, ep.config.password, ep.config.database); err != nil {
+			log.Print("stopping postgres")
 			if stopErr := stopPostgres(binaryExtractLocation, ep.config); stopErr != nil {
 				return fmt.Errorf("unable to stop database casused by error %s", err)
 			}
@@ -108,7 +119,9 @@ func (ep *EmbeddedPostgres) Start() error {
 		}
 	}
 
+	log.Print("health check database")
 	if err := healthCheckDatabaseOrTimeout(ep.config); err != nil {
+		log.Print("stopping postgres")
 		if stopErr := stopPostgres(binaryExtractLocation, ep.config); stopErr != nil {
 			return fmt.Errorf("unable to stop database casused by error %s", err)
 		}
